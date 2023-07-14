@@ -49,12 +49,12 @@ module games::profits_pool {
         balance::join(&mut pool.balance, coinb);
     }
 
-    /*public fun lock_coin_for_staking (pool: Pool, coin: Coin<SUI>, amount : u64, ctx : &mut TxContext) {
-        let b = coin::into_balance(coin);
-        assert!(balance::value(&b) >= amount, EInsufficientFunds);
-        let lockCoin = locked_coin::lock_coin(coin, tx_context::sender(ctx), 1,  ctx);
-        transfer::transfer(lockCoin, tx_context::sender(ctx));
-    }*/
+    public fun lock_coin_for_staking (pool: &mut Pool, coin: Coin<SUI>, amount : u64, ctx : &mut TxContext) {
+        let b = coin::value(&coin);
+        assert!(b >= amount, EInsufficientFunds);
+        pool.supply = pool.supply + b;
+        locked_coin::lock_coin(coin, tx_context::sender(ctx), 2,  ctx);
+    }
 
     #[test_only]
     public fun init_for_testing(ctx: &mut TxContext) {
@@ -81,19 +81,21 @@ module games::profits_pool {
 
         let scenario_val = test_scenario::begin(user1);
         let scenario = &mut scenario_val;
-        let ctx = tx_context::dummy();
-        let clock = clock::create_for_testing(&mut ctx);
+        //let ctx = tx_context::dummy();
+        let clock = clock::create_for_testing(test_scenario::ctx(scenario));
         clock::increment_for_testing( &mut clock, 42);
         test_scenario::next_tx(scenario, user1);
-        init_for_testing(&mut ctx);
+        init_for_testing(test_scenario::ctx(scenario));
         
         test_scenario::next_tx(scenario, user2);
         let pool = test_scenario::take_shared<Pool>(scenario);
-        //debug::print(&pool.epoch);
+        debug::print(&pool.epoch);
         //debug::print(&pool.digest);
-        pool_update(&mut pool,&mut ctx);
-        //debug::print(&pool.epoch);
+        test_scenario::next_epoch(scenario, user1);
+        pool_update(&mut pool,test_scenario::ctx(scenario));
+        debug::print(&pool.epoch);
         //debug::print(&pool.digest);
+        lock_coin_for_staking(&mut pool,coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)),10, test_scenario::ctx(scenario));
 
         test_scenario::return_shared(pool);
         clock::destroy_for_testing(clock);

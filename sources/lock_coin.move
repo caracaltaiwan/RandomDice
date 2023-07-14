@@ -19,7 +19,12 @@ module games::locked_coin {
     }
 
     /// Create a LockedCoin from `balance` and transfer it to `owner`.
-    public fun new_from_balance<T>(balance: Balance<T>, locked_until_epoch: EpochTimeLock, owner: address, ctx: &mut TxContext) {
+    public fun new_from_balance<T>(
+        balance: Balance<T>, 
+        locked_until_epoch: EpochTimeLock, 
+        owner: address, 
+        ctx: &mut TxContext
+    ) {
         let locked_coin = LockedCoin {
             id: object::new(ctx),
             balance,
@@ -38,7 +43,10 @@ module games::locked_coin {
     /// is transferred to the `recipient`. This function aborts if the `locked_until_epoch` is less than
     /// or equal to the current epoch.
     public entry fun lock_coin<T>(
-        coin: Coin<T>, recipient: address, locked_until_epoch: u64, ctx: &mut TxContext
+        coin: Coin<T>, 
+        recipient: address, 
+        locked_until_epoch: u64, 
+        ctx: &mut TxContext
     ) {
         let balance = coin::into_balance(coin);
         new_from_balance(balance, epoch_time_lock::new(locked_until_epoch, ctx), recipient, ctx);
@@ -47,7 +55,10 @@ module games::locked_coin {
     /// Unlock a locked coin. The function aborts if the current epoch is less than the `locked_until_epoch`
     /// of the coin. If the check is successful, the locked coin is deleted and a Coin<T> is transferred back
     /// to the sender.
-    public entry fun unlock_coin<T>(locked_coin: LockedCoin<T>, ctx: &mut TxContext) {
+    public entry fun unlock_coin<T>(
+        locked_coin: LockedCoin<T>, 
+        ctx: &mut TxContext
+    ) {
         let LockedCoin { id, balance, locked_until_epoch } = locked_coin;
         object::delete(id);
         epoch_time_lock::destroy(locked_until_epoch, ctx);
@@ -81,6 +92,14 @@ module games::locked_coin {
         test_scenario::next_tx(scenario, user1);
         let coinOut = test_scenario::take_from_address<Coin<SUI>>(scenario, user1);
         lock_coin(coinOut, user1, 1, test_scenario::ctx(scenario));
+
+        //
+        test_scenario::next_epoch(scenario, user1);
+        test_scenario::next_tx(scenario, user1);
+        let lockCoin = test_scenario::take_from_address<LockedCoin<SUI>>(scenario, user1);
+        unlock_coin(lockCoin, test_scenario::ctx(scenario));
+
+        
 
         //
         test_scenario::end(scenario_val);

@@ -1,0 +1,11 @@
+[package]
+name = "Games"
+version = "0.0.1"
+published-at = "0x4948de541af3d4c2e71c28e150d9122727e64a4f09881e1498c2095517d20c2e"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "devnet" }
+
+[addresses]
+games = "0x0"
+clock = "0x6"

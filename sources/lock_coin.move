@@ -30,7 +30,8 @@ module games::locked_coin {
             balance,
             locked_until_epoch
         };
-        debug::print(&locked_coin);
+        debug::print(&owner);
+        debug::print(&locked_coin.id);
         transfer::transfer(locked_coin, owner);
     }
 

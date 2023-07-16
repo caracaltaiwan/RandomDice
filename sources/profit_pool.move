@@ -7,7 +7,7 @@ module games::profits_pool {
     use sui::sui::SUI;
     use sui::coin::{Self, Coin};
     use games::drand_based_lottery::{Self, Game};
-    use games::locked_coin;
+    use games::locked_coin::{Self, LockedCoin};
 
     use std::debug;
 
@@ -53,6 +53,7 @@ module games::profits_pool {
         let b = coin::value(&coin);
         assert!(b >= amount, EInsufficientFunds);
         pool.supply = pool.supply + b;
+        debug::print(&tx_context::sender(ctx));
         locked_coin::lock_coin(coin, tx_context::sender(ctx), 2,  ctx);
     }
 
@@ -70,9 +71,10 @@ module games::profits_pool {
     #[allow(unused_assignment)]
     #[test]
     fun test_pool_epoch() {
-        use sui::test_scenario::{Self};
+        use sui::test_scenario;
         use std::debug;
         use sui::clock;
+        use sui::sui::SUI;
 
         let user1 = @0x0;
         let user2 = @0x1;
@@ -81,22 +83,37 @@ module games::profits_pool {
 
         let scenario_val = test_scenario::begin(user1);
         let scenario = &mut scenario_val;
-        //let ctx = tx_context::dummy();
         let clock = clock::create_for_testing(test_scenario::ctx(scenario));
         clock::increment_for_testing( &mut clock, 42);
         test_scenario::next_tx(scenario, user1);
         init_for_testing(test_scenario::ctx(scenario));
         
+        //
         test_scenario::next_tx(scenario, user2);
         let pool = test_scenario::take_shared<Pool>(scenario);
+
+        //
         debug::print(&pool.epoch);
-        //debug::print(&pool.digest);
+        debug::print(&pool.digest);
+        //
         test_scenario::next_epoch(scenario, user1);
         pool_update(&mut pool,test_scenario::ctx(scenario));
         debug::print(&pool.epoch);
-        //debug::print(&pool.digest);
+        debug::print(&pool.digest);
+        
+        //
+        test_scenario::next_tx(scenario, user1);
+        //lock_coin_for_staking(&mut pool,coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)),10, test_scenario::ctx(scenario));
         lock_coin_for_staking(&mut pool,coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)),10, test_scenario::ctx(scenario));
+        
+        //
+        test_scenario::next_epoch(scenario, user1);
+        test_scenario::next_tx(scenario, user1);
+        locked_coin::unlock_coin(test_scenario::take_from_address<LockedCoin<SUI>>(scenario, user1), test_scenario::ctx(scenario));
+        
 
+
+        //
         test_scenario::return_shared(pool);
         clock::destroy_for_testing(clock);
         test_scenario::end(scenario_val);

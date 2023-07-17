@@ -49,12 +49,21 @@ module games::profits_pool {
         balance::join(&mut pool.balance, coinb);
     }
 
-    public fun lock_coin_for_staking (pool: &mut Pool, coin: Coin<SUI>, amount : u64, ctx : &mut TxContext) {
-        let b = coin::value(&coin);
-        assert!(b >= amount, EInsufficientFunds);
-        pool.supply = pool.supply + b;
+    public entry fun lock_coin_for_staking (pool: &mut Pool, coin: Coin<SUI>, amount : u64, ctx : &mut TxContext) {
+        let balance = coin::value(&coin);
+        assert!(balance >= amount, EInsufficientFunds);
+        pool.supply = pool.supply + balance;
         debug::print(&tx_context::sender(ctx));
-        locked_coin::lock_coin(coin, tx_context::sender(ctx), 2,  ctx);
+        let send_to_lock_coin =coin::split(&mut coin, balance, ctx);
+        locked_coin::lock_coin(send_to_lock_coin, tx_context::sender(ctx), tx_context::epoch(ctx) + 1,  ctx);
+        transfer::public_transfer(coin, tx_context::sender(ctx));
+    }
+
+    public entry fun unlock_coin_from_staked (pool: &mut Pool, lock_coin: LockedCoin<SUI>, ctx: &mut TxContext) {
+        let balance = locked_coin::value(&lock_coin);
+        assert!(balance <= pool.supply, EInsufficientFunds);
+        pool.supply= pool.supply - balance;
+        locked_coin::unlock_coin(lock_coin, ctx);
     }
 
     #[test_only]
@@ -105,12 +114,14 @@ module games::profits_pool {
         test_scenario::next_tx(scenario, user1);
         //lock_coin_for_staking(&mut pool,coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)),10, test_scenario::ctx(scenario));
         lock_coin_for_staking(&mut pool,coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)),10, test_scenario::ctx(scenario));
-        
+        debug::print(&pool.supply);
+
         //
         test_scenario::next_epoch(scenario, user1);
         test_scenario::next_tx(scenario, user1);
-        locked_coin::unlock_coin(test_scenario::take_from_address<LockedCoin<SUI>>(scenario, user1), test_scenario::ctx(scenario));
-        
+        //locked_coin::unlock_coin(test_scenario::take_from_address<LockedCoin<SUI>>(scenario, user1), test_scenario::ctx(scenario));
+        unlock_coin_from_staked(&mut pool, test_scenario::take_from_address<LockedCoin<SUI>>(scenario, user1), test_scenario::ctx(scenario));
+        debug::print(&pool.supply);
 
 
         //

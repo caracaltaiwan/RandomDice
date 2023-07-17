@@ -11,6 +11,8 @@ module games::locked_coin {
 
     use std::debug;
 
+    friend games::profits_pool;
+
     /// A coin of type `T` locked until `locked_until_epoch`.
     struct LockedCoin<phantom T> has key {
         id: UID,
@@ -19,7 +21,7 @@ module games::locked_coin {
     }
 
     /// Create a LockedCoin from `balance` and transfer it to `owner`.
-    public fun new_from_balance<T>(
+    public(friend) fun new_from_balance<T>(
         balance: Balance<T>, 
         locked_until_epoch: EpochTimeLock, 
         owner: address, 
@@ -43,7 +45,7 @@ module games::locked_coin {
     /// Lock a coin up until `locked_until_epoch`. The input Coin<T> is deleted and a LockedCoin<T>
     /// is transferred to the `recipient`. This function aborts if the `locked_until_epoch` is less than
     /// or equal to the current epoch.
-    public entry fun lock_coin<T>(
+    public(friend) entry fun lock_coin<T>(
         coin: Coin<T>, 
         recipient: address, 
         locked_until_epoch: u64, 

@@ -1,7 +1,7 @@
 [package]
 name = "Games"
 version = "0.0.1"
-published-at = "0x778ce991da269b80aa515c0e3c87db83afdca00458f4e4c40ea5d06d4f4c35aa"
+published-at = "0xd0b733ce4e693cbdbf29051c28a80d72f1f0148aeaeecd821c99d33065fc3dae"
 
 [dependencies]
 Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "devnet" }

@@ -40,7 +40,7 @@
 /// All the external inputs needed for the following APIs can be retrieved from one of drand's public APIs, e.g. using
 /// the above curl commands.
 ///
-module games::drand_based_lottery {
+module games::drand_random_dice {
     use games::drand_lib::{derive_randomness, verify_drand_signature, safe_selection, get_lateset_round};
     use std::option::{Self, Option};
     use sui::object::{Self, ID, UID};

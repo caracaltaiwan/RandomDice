@@ -48,9 +48,6 @@ module games::drand_lib {
         vector::append(&mut prev_sig, round_bytes);
         let digest = sha2_256(prev_sig);
         // Verify the signature on the hash.
-        //debug::print(&sig);
-        //debug::print(&DRAND_PK);
-        //debug::print(&digest);
         assert!(bls12381::bls12381_min_pk_verify(&sig, &DRAND_PK, &digest), EInvalidProof);
     }
 
@@ -88,8 +85,6 @@ module games::drand_lib {
     #[test]
     fun test_random() {
         let _test = sha2_256(x"aec34e398bb53efc192ef6b91ad6960689aefa2c8326c521523d922849bb8bc16e76872640e7a1dd656e94772d9fd4ae19a63a10854a0853505bd3c8c5b8fff109ff260b0566b5ac93d2b0d8fecc9b08f7ad5101a253913f55a0c53f45c15c7f");
-        //debug::print<vector<u8>>(&_test);
-        //debug::print<vector<u8>>(&sha2_256(x"aec34e398bb53efc192ef6b91ad6960689aefa2c8326c521523d922849bb8bc16e76872640e7a1dd656e94772d9fd4ae19a63a10854a0853505bd3c8c5b8fff109ff260b0566b5ac93d2b0d8fecc9b08f7ad5101a253913f55a0c53f45c15c7f"));
     }
 
     #[test]

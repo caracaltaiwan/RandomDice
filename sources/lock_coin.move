@@ -90,7 +90,6 @@ module games::locked_coin {
         debug::print(&coinA);
         transfer::public_transfer(coinA, user1);
         
-        
         //
         test_scenario::next_tx(scenario, user1);
         let coinOut = test_scenario::take_from_address<Coin<SUI>>(scenario, user1);
@@ -101,8 +100,6 @@ module games::locked_coin {
         test_scenario::next_tx(scenario, user1);
         let lockCoin = test_scenario::take_from_address<LockedCoin<SUI>>(scenario, user1);
         unlock_coin(lockCoin, test_scenario::ctx(scenario));
-
-        
 
         //
         test_scenario::end(scenario_val);

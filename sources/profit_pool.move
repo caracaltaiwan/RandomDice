@@ -5,9 +5,9 @@ module games::profits_pool {
     use sui::tx_context::{Self, TxContext};
     use sui::balance::{Self, Balance};
     use sui::sui::SUI;
-    use sui::coin::{Self, Coin};
-    use games::hongwang_coin::HWCOIN;
-    use games::drand_random_dice::{Self, Game};
+    use sui::coin::{Self, Coin, TreasuryCap};
+    use games::hongwang_coin::HONGWANG_COIN;
+    use games::drand_random_dice::{Self, GameOwnerCapability, Game};
     use games::locked_coin::{Self, LockedCoin};
 
     use std::debug;
@@ -17,16 +17,26 @@ module games::profits_pool {
     /// Nothing to withdraw
     const ENoProfits: u64 = 1;
 
+    /// One time witness
+    struct PROFITS_POOL has drop {}
+
     struct Pool has key, store {
         id : UID,
         balance : balance::Balance<SUI>,
         epoch : u64,
         digest : vector<u8>,
-        supply : u64,
+        token_supply : u64,
+    }
+    struct HW_CAP has key {
+        id: UID,
     }
 
     #[allow(unused_function)]
-    fun init(ctx: &mut TxContext) {
+    /// === Initial Profit Pool ===
+    fun init(witness: PROFITS_POOL, ctx: &mut TxContext) {
+        let hw_cap = HW_CAP{id: object::new(ctx)};
+        transfer::transfer(hw_cap, tx_context::sender(ctx));
+
         let txEpoch = tx_context::epoch(ctx);
         let txDigest = *tx_context::digest(ctx);
         let pool = Pool{
@@ -34,11 +44,13 @@ module games::profits_pool {
             balance: balance::zero<SUI>(), 
             epoch : txEpoch,
             digest : txDigest,
-            supply : 0,
+            token_supply : 0,
         };
         transfer::public_share_object(pool);
     }
 
+    
+    /// === Creator/Owner Operation ===
     public fun pool_update (pool: &mut Pool, ctx: &mut TxContext){
         pool.epoch = tx_context::epoch(ctx);
         pool.digest = *tx_context::digest(ctx);
@@ -50,10 +62,27 @@ module games::profits_pool {
         balance::join(&mut pool.balance, coinb);
     }
 
-    public entry fun lock_coin_for_staking (pool: &mut Pool, coin: Coin<SUI>, amount : u64, ctx : &mut TxContext) {
+    public entry fun mint_hw_coin (cap: &mut TreasuryCap<HONGWANG_COIN>, game: &mut Game, amount: u64, ctx: &mut TxContext) {
+        let coin = coin::mint(cap, amount, ctx);
+        transfer::public_transfer(coin, tx_context::sender(ctx));
+    }
+
+    public entry fun collect_profits(_hw_cap: &HW_CAP, _cap:&GameOwnerCapability, game: &mut Game, profits_pool: &mut Pool, ctx: &mut TxContext) {
+        let amount = balance::value(drand_random_dice::profit_amount(game));
+        assert!(amount > 0, ENoProfits);
+
+        // Take a transferable `Coin` from a `Balance`
+        let coin = coin::take(drand_random_dice::profit_amount(game), amount, ctx);
+
+        //Transfer profit pool
+        deposit(profits_pool, coin);
+    }
+
+    /// === General Token Hodler ===
+    public entry fun lock_coin_for_staking (pool: &mut Pool, coin: Coin<HONGWANG_COIN>, amount : u64, ctx : &mut TxContext) {
         let balance = coin::value(&coin);
         assert!(balance >= amount, EInsufficientFunds);
-        pool.supply = pool.supply + balance;
+        pool.token_supply = pool.token_supply + balance;
         debug::print(&tx_context::sender(ctx));
         let send_to_lock_coin = coin::split(&mut coin, amount, ctx);
         debug::print(&coin);
@@ -62,23 +91,28 @@ module games::profits_pool {
         transfer::public_transfer(coin, tx_context::sender(ctx));
     }
 
-    public entry fun unlock_coin_from_staked (pool: &mut Pool, lock_coin: LockedCoin<SUI>, ctx: &mut TxContext) {
+    public entry fun unlock_coin_from_staked (pool: &mut Pool, lock_coin: LockedCoin<HONGWANG_COIN>, ctx: &mut TxContext) {
         let balance = locked_coin::value(&lock_coin);
-        assert!(balance <= pool.supply, EInsufficientFunds);
+        assert!(balance <= pool.token_supply, EInsufficientFunds);
         locked_coin::unlock_coin(lock_coin, ctx);
-        let pool_balance = balance::split(&mut pool.balance, balance);
-        let coin_b = coin::from_balance(pool_balance,ctx);
-        transfer::public_transfer(coin_b, tx_context::sender(ctx));
-        pool.supply= pool.supply - balance;
+        earn_profit(pool, balance, ctx);
     }
 
-    /*fun earn_profit (pool: &mut Pool, ctx: &mut TxContext) {
+    fun earn_profit (pool: &mut Pool, amount: u64, ctx: &mut TxContext) {
+        let counting = 
+            amount / pool.token_supply *
+            balance::value(&pool.balance);
+        let profit = balance::split(&mut pool.balance, counting);
+        let earn = coin::from_balance(profit, ctx);
+        transfer::public_transfer(earn, tx_context::sender(ctx));
 
-    }*/
+        //Minus coin supply. 
+        pool.token_supply= pool.token_supply - amount;
+    }
 
     #[test_only]
     public fun init_for_testing(ctx: &mut TxContext) {
-        init(ctx);
+        init(PROFITS_POOL{}, ctx);
     }
 
     #[test_only]
@@ -117,16 +151,15 @@ module games::profits_pool {
         
         //
         test_scenario::next_tx(scenario, user1);
-        lock_coin_for_staking(&mut pool,coin::mint_for_testing<SUI>(10_000_000_000, test_scenario::ctx(scenario)),9_000_000_000, test_scenario::ctx(scenario));
+        lock_coin_for_staking(&mut pool,coin::mint_for_testing<HONGWANG_COIN>(10_000_000_000, test_scenario::ctx(scenario)),9_000_000_000, test_scenario::ctx(scenario));
         debug::print(&pool.balance);
-        debug::print(&pool.supply);
+        debug::print(&pool.token_supply);
 
         //
         test_scenario::next_epoch(scenario, user1);
         test_scenario::next_tx(scenario, user1);
-        unlock_coin_from_staked(&mut pool, test_scenario::take_from_address<LockedCoin<SUI>>(scenario, user1), test_scenario::ctx(scenario));
-        debug::print(&pool.supply);
-
+        unlock_coin_from_staked(&mut pool, test_scenario::take_from_address<LockedCoin<HONGWANG_COIN>>(scenario, user1), test_scenario::ctx(scenario));
+        debug::print(&pool.token_supply);
 
         //
         test_scenario::return_shared(pool);
@@ -165,5 +198,10 @@ module games::profits_pool {
         test_scenario::return_shared(pool);
         clock::destroy_for_testing(clock);
         test_scenario::end(scenario_val);
+    }
+
+    #[test]
+    fun test_hongwang_coin_supply() {
+        
     }
 }

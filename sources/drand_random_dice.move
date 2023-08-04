@@ -42,6 +42,7 @@
 ///
 module games::drand_random_dice {
     use games::drand_lib::{derive_randomness, verify_drand_signature, safe_selection, get_lateset_round};
+    use games::hongwang_coin::HONGWANG_COIN;
     use std::option::{Self, Option};
     use sui::object::{Self, ID, UID};
     use sui::transfer;
@@ -50,7 +51,6 @@ module games::drand_random_dice {
     use sui::balance::{Self, Balance};
     use sui::coin::{Self, Coin};
     use sui::sui::SUI;
-    use games::profits_pool::{Self, Pool};
 
     use std::debug;
 
@@ -70,6 +70,8 @@ module games::drand_random_dice {
     const CLOSED: u8 = 1;
     const COMPLETED: u8 = 2;
 
+    struct DRAND_RANDOM_DICE has drop {}
+
     /// Game represents a set of parameters of a single game.
     /// This game can be extended to require ticket purchase, reward winners, etc.
     ///
@@ -79,6 +81,7 @@ module games::drand_random_dice {
         status: u8,
         participants: u64,
         winner: Option<u64>,
+        governanceToken: Balance<HONGWANG_COIN>,
         reward: Balance<SUI>,
         profits: Balance<SUI>,
     }
@@ -105,7 +108,7 @@ module games::drand_random_dice {
         id: UID
     }
     
-    fun init(ctx: &mut sui::tx_context::TxContext) {
+    fun init(otw: DRAND_RANDOM_DICE, ctx: &mut sui::tx_context::TxContext) {
         let game_owner_cap = GameOwnerCapability{
             id:object::new(ctx)
         };
@@ -115,7 +118,7 @@ module games::drand_random_dice {
         );
     }
 
-    /// Create a shared-object Game.
+    /// Create a assign epoch shared-object Game.
     /*
     public entry fun create(round: u64, ctx: &mut TxContext) {
         let game = Game {
@@ -130,6 +133,7 @@ module games::drand_random_dice {
         transfer::public_share_object(game);
     }*/
 
+    /// === Owner Operation ===
     public entry fun create_after_round(clock: &Clock, round: u64, ctx: &mut TxContext) {
         let clock_ms = clock::timestamp_ms(clock);
         round = round + get_lateset_round(clock_ms);
@@ -139,6 +143,7 @@ module games::drand_random_dice {
             status: IN_PROGRESS,
             participants: 0,
             winner: option::none(),
+            governanceToken: balance::zero<HONGWANG_COIN>(),
             reward: balance::zero<SUI>(),
             profits: balance::zero<SUI>(),
         };
@@ -151,6 +156,13 @@ module games::drand_random_dice {
         verify_drand_signature(drand_sig, drand_prev_sig, closing_round(game.round));
         game.status = CLOSED;
     }
+
+    /// 
+    public fun profit_amount(game: &mut Game): &mut Balance<SUI> {
+        &mut game.reward
+    }
+
+    /// === Creator/User Operation ===
 
     /// Anyone can complete the game by providing the randomness of round.
     public entry fun complete(game: &mut Game, drand_sig: vector<u8>, drand_prev_sig: vector<u8>) {
@@ -193,19 +205,6 @@ module games::drand_random_dice {
         transfer::public_transfer(redeem, tx_context::sender(ctx));
     }
 
-    /// Withdraw profits to pool.
-    public entry fun collect_profits(_cap:&GameOwnerCapability, game: &mut Game, profits_pool: &mut Pool, ctx: &mut TxContext) {
-        let amount = balance::value(&game.profits);
-
-        assert!(amount > 0, ENoProfits);
-
-        // Take a transferable `Coin` from a `Balance`
-        let coin = coin::take(&mut game.profits, amount, ctx);
-
-        //Transfer profit pool
-        profits_pool::deposit(profits_pool, coin);
-    }
-
     // Note that a ticket can be deleted before the game was completed.
     public entry fun delete_ticket(ticket: Ticket) {
         let Ticket { id, game_id:  _, price: _, participant_index: _} = ticket;
@@ -226,6 +225,6 @@ module games::drand_random_dice {
 
     #[test_only]
     public fun init_for_testing(ctx: &mut TxContext) {
-        init(ctx);
+        init(DRAND_RANDOM_DICE{}, ctx);
     }
 }

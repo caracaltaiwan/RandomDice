@@ -12,7 +12,7 @@ module games::drand_random_dice_test {
     use sui::sui::SUI;
     use sui::clock;
     use sui::tx_context;
-    use games::profits_pool::{Self, Pool};
+    use games::profits_pool::{Self, HW_CAP, Pool};
 
     const GENESIS: u64 = 1595431050;
 
@@ -122,10 +122,12 @@ module games::drand_random_dice_test {
 
         // Withdraw profit from game.
         test_scenario::next_tx(scenario, user1);
-        drand_random_dice::collect_profits(&cap, game, pool, &mut ctx);
+        let hw_cap = test_scenario::take_from_sender<HW_CAP>(scenario);
+        profits_pool::collect_profits(&hw_cap, &cap, game, pool, &mut ctx);
         debug::print(&pool_val);
 
         // Dismiss all share object.
+        test_scenario::return_to_sender(scenario, hw_cap);
         test_scenario::return_to_sender(scenario, cap);
         test_scenario::return_shared(pool_val);
         test_scenario::return_shared(game_val);

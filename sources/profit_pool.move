@@ -7,7 +7,6 @@ module games::profits_pool {
     use sui::sui::SUI;
     use sui::coin::{Self, Coin, TreasuryCap};
     use games::hongwang_coin::HONGWANG_COIN;
-    use games::drand_random_dice::{Self, GameOwnerCapability, Game};
     use games::locked_coin::{Self, LockedCoin};
 
     use std::debug;
@@ -22,10 +21,11 @@ module games::profits_pool {
 
     struct Pool has key, store {
         id : UID,
-        balance : balance::Balance<SUI>,
+        reward_pool : balance::Balance<SUI>,
         epoch : u64,
         digest : vector<u8>,
-        token_supply : u64,
+        governanceToken : balance::Balance<HONGWANG_COIN>,
+        token_supply: u64,
     }
     struct HW_CAP has key {
         id: UID,
@@ -41,14 +41,14 @@ module games::profits_pool {
         let txDigest = *tx_context::digest(ctx);
         let pool = Pool{
             id: object::new(ctx),
-            balance: balance::zero<SUI>(), 
+            reward_pool: balance::zero<SUI>(), 
             epoch : txEpoch,
             digest : txDigest,
-            token_supply : 0,
+            governanceToken : balance::zero<HONGWANG_COIN>(),
+            token_supply: 10000,
         };
         transfer::public_share_object(pool);
     }
-
     
     /// === Creator/Owner Operation ===
     public fun pool_update (pool: &mut Pool, ctx: &mut TxContext){
@@ -56,34 +56,21 @@ module games::profits_pool {
         pool.digest = *tx_context::digest(ctx);
     }
 
-    public fun deposit (pool: &mut Pool, coin: Coin<SUI>){
-        let coinb = coin::into_balance(coin);
-        assert!(balance::value(&coinb) >= 0, ENoProfits);
-        balance::join(&mut pool.balance, coinb);
-    }
-
-    public entry fun mint_hw_coin (cap: &mut TreasuryCap<HONGWANG_COIN>, game: &mut Game, amount: u64, ctx: &mut TxContext) {
+    public entry fun mint_hw_coin (cap: &mut TreasuryCap<HONGWANG_COIN>, amount: u64, ctx: &mut TxContext) {
         let coin = coin::mint(cap, amount, ctx);
         transfer::public_transfer(coin, tx_context::sender(ctx));
     }
 
-    public entry fun collect_profits(_hw_cap: &HW_CAP, _cap:&GameOwnerCapability, game: &mut Game, profits_pool: &mut Pool, ctx: &mut TxContext) {
-        let amount = balance::value(drand_random_dice::profit_amount(game));
-        assert!(amount > 0, ENoProfits);
-
-        // Take a transferable `Coin` from a `Balance`
-        let coin = coin::take(drand_random_dice::profit_amount(game), amount, ctx);
-
-        //Transfer profit pool
-        deposit(profits_pool, coin);
+    public fun deposit (pool: &mut Pool, coin: Coin<SUI>){
+        let coinb = coin::into_balance(coin);
+        assert!(balance::value(&coinb) >= 0, ENoProfits);
+        balance::join(&mut pool.reward_pool, coinb);
     }
 
     /// === General Token Hodler ===
     public entry fun lock_coin_for_staking (pool: &mut Pool, coin: Coin<HONGWANG_COIN>, amount : u64, ctx : &mut TxContext) {
         let balance = coin::value(&coin);
         assert!(balance >= amount, EInsufficientFunds);
-        pool.token_supply = pool.token_supply + balance;
-        debug::print(&tx_context::sender(ctx));
         let send_to_lock_coin = coin::split(&mut coin, amount, ctx);
         debug::print(&coin);
         debug::print(&send_to_lock_coin);
@@ -92,23 +79,26 @@ module games::profits_pool {
     }
 
     public entry fun unlock_coin_from_staked (pool: &mut Pool, lock_coin: LockedCoin<HONGWANG_COIN>, ctx: &mut TxContext) {
-        let balance = locked_coin::value(&lock_coin);
-        assert!(balance <= pool.token_supply, EInsufficientFunds);
         locked_coin::unlock_coin(lock_coin, ctx);
-        earn_profit(pool, balance, ctx);
     }
 
-    fun earn_profit (pool: &mut Pool, amount: u64, ctx: &mut TxContext) {
+    fun earn_profit (pool: &mut Pool, amount: Coin<HONGWANG_COIN>, ctx: &mut TxContext) {
+        // Base on amount from SUI's balance.
         let counting = 
-            amount / pool.token_supply *
-            balance::value(&pool.balance);
-        let profit = balance::split(&mut pool.balance, counting);
+            coin::value(&amount) / balance::value(&pool.reward_pool) *
+            balance::value(&pool.governanceToken);
+        let profit = balance::split(&mut pool.reward_pool, counting);
         let earn = coin::from_balance(profit, ctx);
         transfer::public_transfer(earn, tx_context::sender(ctx));
-
-        //Minus coin supply. 
-        pool.token_supply= pool.token_supply - amount;
+        
+        // Return HONGWANG coin 
+        balance::join(&mut pool.governanceToken, coin::into_balance(amount));
     }
+
+    /// === General ===
+    public fun pool_reward(pool:&mut Pool): &mut Balance<SUI> {
+        &mut pool.reward_pool
+    } 
 
     #[test_only]
     public fun init_for_testing(ctx: &mut TxContext) {
@@ -118,7 +108,7 @@ module games::profits_pool {
     #[test_only]
     public fun deposit_from_game(pool:&mut Pool, value: u64) {
         let test_balance = balance::create_for_testing<SUI>(value);
-        balance::join(&mut pool.balance, test_balance);
+        balance::join(&mut pool.reward_pool, test_balance);
     }
 
     #[allow(unused_assignment)]
@@ -152,14 +142,14 @@ module games::profits_pool {
         //
         test_scenario::next_tx(scenario, user1);
         lock_coin_for_staking(&mut pool,coin::mint_for_testing<HONGWANG_COIN>(10_000_000_000, test_scenario::ctx(scenario)),9_000_000_000, test_scenario::ctx(scenario));
-        debug::print(&pool.balance);
-        debug::print(&pool.token_supply);
+        debug::print(&pool.reward_pool);
+        debug::print(&pool.governanceToken);
 
         //
         test_scenario::next_epoch(scenario, user1);
         test_scenario::next_tx(scenario, user1);
         unlock_coin_from_staked(&mut pool, test_scenario::take_from_address<LockedCoin<HONGWANG_COIN>>(scenario, user1), test_scenario::ctx(scenario));
-        debug::print(&pool.token_supply);
+        debug::print(&pool.governanceToken);
 
         //
         test_scenario::return_shared(pool);
@@ -178,7 +168,7 @@ module games::profits_pool {
         let user2 = @0x1;
 
         let scenario_val = test_scenario::begin(user1);
-        let scenario = &mut scenario_val;
+        let scenario  = &mut scenario_val;
         let clock = clock::create_for_testing(test_scenario::ctx(scenario));
         clock::increment_for_testing( &mut clock, 42);
         

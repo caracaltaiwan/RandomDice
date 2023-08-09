@@ -76,16 +76,16 @@ module games::drand_random_dice_test {
 
         // User1 buys a ticket.
         test_scenario::next_tx(scenario, user1);
-        drand_random_dice::participate(game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
+        drand_random_dice::participate(pool, game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
         // User2 buys a ticket.
         test_scenario::next_tx(scenario, user2);
-        drand_random_dice::participate(game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
+        drand_random_dice::participate(pool, game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
         // User3 buys a tcket
         test_scenario::next_tx(scenario, user3);
-        drand_random_dice::participate(game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
+        drand_random_dice::participate(pool, game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
         // User4 buys a tcket
         test_scenario::next_tx(scenario, user4);
-        drand_random_dice::participate(game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
+        drand_random_dice::participate(pool, game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
 
         // User 2 closes the game.
         test_scenario::next_tx(scenario, user2);
@@ -111,7 +111,7 @@ module games::drand_random_dice_test {
         test_scenario::next_tx(scenario, user3);
         assert!(!test_scenario::has_most_recent_for_address<GameWinner>(user3), 1);
         let ticket = test_scenario::take_from_address<Ticket>(scenario, user3);
-        drand_random_dice::redeem(&ticket, game, test_scenario::ctx(scenario));
+        drand_random_dice::redeem(pool, game, &ticket, test_scenario::ctx(scenario));
         drand_random_dice::delete_ticket(ticket);
 
         // Make sure User3 now has a winner ticket for the right game id.
@@ -120,14 +120,7 @@ module games::drand_random_dice_test {
         assert!(drand_random_dice::get_game_winner_game_id(&ticket) == &ticket_game_id, 1);
         test_scenario::return_to_address(user3, ticket);*/
 
-        // Withdraw profit from game.
-        test_scenario::next_tx(scenario, user1);
-        let hw_cap = test_scenario::take_from_sender<HW_CAP>(scenario);
-        profits_pool::collect_profits(&hw_cap, &cap, game, pool, &mut ctx);
-        debug::print(&pool_val);
-
         // Dismiss all share object.
-        test_scenario::return_to_sender(scenario, hw_cap);
         test_scenario::return_to_sender(scenario, cap);
         test_scenario::return_shared(pool_val);
         test_scenario::return_shared(game_val);

@@ -43,6 +43,7 @@
 module games::drand_random_dice {
     use games::drand_lib::{derive_randomness, verify_drand_signature, safe_selection, get_lateset_round};
     use games::hongwang_coin::HONGWANG_COIN;
+    use games::profits_pool::{Self, Pool};
     use std::option::{Self, Option};
     use sui::object::{Self, ID, UID};
     use sui::transfer;
@@ -81,9 +82,6 @@ module games::drand_random_dice {
         status: u8,
         participants: u64,
         winner: Option<u64>,
-        governanceToken: Balance<HONGWANG_COIN>,
-        reward: Balance<SUI>,
-        profits: Balance<SUI>,
     }
 
     /// Ticket represents a participant in a single game.
@@ -143,9 +141,6 @@ module games::drand_random_dice {
             status: IN_PROGRESS,
             participants: 0,
             winner: option::none(),
-            governanceToken: balance::zero<HONGWANG_COIN>(),
-            reward: balance::zero<SUI>(),
-            profits: balance::zero<SUI>(),
         };
         transfer::public_share_object(game);
     }
@@ -155,11 +150,6 @@ module games::drand_random_dice {
         assert!(game.status == IN_PROGRESS, EGameNotInProgress);
         verify_drand_signature(drand_sig, drand_prev_sig, closing_round(game.round));
         game.status = CLOSED;
-    }
-
-    /// 
-    public fun profit_amount(game: &mut Game): &mut Balance<SUI> {
-        &mut game.reward
     }
 
     /// === Creator/User Operation ===
@@ -175,7 +165,7 @@ module games::drand_random_dice {
     }
 
     /// Anyone can participate in the game and receive a ticket.
-    public entry fun participate(game: &mut Game, c: Coin<SUI>, ctx: &mut TxContext) {
+    public entry fun participate(pool: &mut Pool, game: &mut Game, c: Coin<SUI>, ctx: &mut TxContext) {
         assert!(game.status == IN_PROGRESS, EGameNotInProgress);
         let b = coin::into_balance(c);
         let price = balance::value(&b) * 9 / 10;
@@ -189,18 +179,15 @@ module games::drand_random_dice {
         game.participants = game.participants + 1;
 
         //how many coin in this tx supply.
-        let profitnumber = balance::value(&b) / 10;
-        let profitsupply = balance::split(&mut b, profitnumber);
-        balance::join(&mut game.reward, b);
-        balance::join(&mut game.profits, profitsupply);
+        balance::join(profits_pool::pool_reward(pool), b);
         transfer::public_transfer(ticket, tx_context::sender(ctx));
     }
 
     /// The winner can redeem its ticket.
-    public entry fun redeem(ticket: &Ticket, game: &mut Game, ctx: &mut TxContext) {
+    public entry fun redeem(pool: &mut Pool, game: &mut Game, ticket: &Ticket, ctx: &mut TxContext) {
         assert!(object::id(game) == ticket.game_id, EInvalidTicket);
         let amount = ticket.price;
-        let redeem = coin::take(&mut game.reward,amount, ctx);
+        let redeem = coin::take(profits_pool::pool_reward(pool),amount, ctx);
 
         transfer::public_transfer(redeem, tx_context::sender(ctx));
     }

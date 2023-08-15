@@ -40,7 +40,7 @@ module games::hongwang_coin {
 
     #[allow(unused_assignment)]
     #[test_only]
-    fun init_hwcoin_for_test(ctx: &mut TxContext){
+    public fun init_hwcoin_for_test(ctx: &mut TxContext){
         init( HONGWANG_COIN {}, ctx);
     }
 

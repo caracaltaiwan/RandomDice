@@ -9,7 +9,6 @@
 module games::drand_lib {
     use std::hash::sha2_256;
     use std::vector;
-    use std::debug;
 
     use sui::bls12381;
     use sui::clock;
@@ -77,7 +76,6 @@ module games::drand_lib {
     /// Automatically fetching the latest round.
     public entry fun get_lateset_round(timestamp_ms: u64): u64{
         let clock = timestamp_ms;
-        debug::print(&timestamp_ms);
         let round = (clock - GENESIS)  / 30 + 1;
         round
     }

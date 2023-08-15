@@ -66,26 +66,27 @@ module games::drand_random_dice_test {
         profits_pool::init_for_testing(test_scenario::ctx(scenario));
         
         //Create game, code equivalent : drand_random_dice::create(10, test_scenario::ctx(scenario));
-        drand_random_dice::create_after_round(&clock, 9, test_scenario::ctx(scenario));
+        test_scenario::next_tx(scenario, user1);
+        let pool_val = test_scenario::take_from_address<Pool>(scenario, user1);
+        let cap = test_scenario::take_from_address<GameOwnerCapability>(scenario, user1);
+        drand_random_dice::create_after_round(&cap, pool_val, &clock, 9, test_scenario::ctx(scenario));
+        
         test_scenario::next_tx(scenario, user1);
         let game_val = test_scenario::take_shared<Game>(scenario);
         let game = &mut game_val;
-        let pool_val = test_scenario::take_shared<Pool>(scenario);
-        let pool = &mut pool_val;
-        let cap = test_scenario::take_from_address<GameOwnerCapability>(scenario, user1);
 
         // User1 buys a ticket.
         test_scenario::next_tx(scenario, user1);
-        drand_random_dice::participate(pool, game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
+        drand_random_dice::play_random_dice(game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
         // User2 buys a ticket.
         test_scenario::next_tx(scenario, user2);
-        drand_random_dice::participate(pool, game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
+        drand_random_dice::play_random_dice(game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
         // User3 buys a tcket
         test_scenario::next_tx(scenario, user3);
-        drand_random_dice::participate(pool, game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
+        drand_random_dice::play_random_dice(game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
         // User4 buys a tcket
         test_scenario::next_tx(scenario, user4);
-        drand_random_dice::participate(pool, game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
+        drand_random_dice::play_random_dice(game, coin::mint_for_testing<SUI>(10, test_scenario::ctx(scenario)), test_scenario::ctx(scenario));
 
         // User 2 closes the game.
         test_scenario::next_tx(scenario, user2);
@@ -111,7 +112,7 @@ module games::drand_random_dice_test {
         test_scenario::next_tx(scenario, user3);
         assert!(!test_scenario::has_most_recent_for_address<GameWinner>(user3), 1);
         let ticket = test_scenario::take_from_address<Ticket>(scenario, user3);
-        drand_random_dice::redeem(pool, game, &ticket, test_scenario::ctx(scenario));
+        drand_random_dice::redeem(game, &ticket, test_scenario::ctx(scenario));
         drand_random_dice::delete_ticket(ticket);
 
         // Make sure User3 now has a winner ticket for the right game id.
@@ -121,8 +122,8 @@ module games::drand_random_dice_test {
         test_scenario::return_to_address(user3, ticket);*/
 
         // Dismiss all share object.
+        test_scenario::next_tx(scenario, user1);
         test_scenario::return_to_sender(scenario, cap);
-        test_scenario::return_shared(pool_val);
         test_scenario::return_shared(game_val);
         clock::destroy_for_testing(clock);
         test_scenario::end(scenario_val);
@@ -149,14 +150,13 @@ module games::drand_random_dice_test {
         
         //
         test_scenario::next_tx(scenario, user1);
-        let pool_val = test_scenario::take_shared<Pool>(scenario);
+        let pool_val = test_scenario::take_from_address<Pool>(scenario, user1);
         let pool = &mut pool_val;
         profits_pool::deposit_from_game(pool, 100);
-        debug::print(&pool_val);
 
 
         //
-        test_scenario::return_shared(pool_val);
+        test_scenario::return_to_sender(scenario, pool_val);
         clock::destroy_for_testing(clock);
         test_scenario::end(scenario_val);
     }

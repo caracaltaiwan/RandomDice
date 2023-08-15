@@ -14,7 +14,7 @@ module games::locked_coin {
     friend games::profits_pool;
 
     /// A coin of type `T` locked until `locked_until_epoch`.
-    struct LockedCoin<phantom T> has key {
+    struct LockedCoin<phantom T> has key, store {
         id: UID,
         balance: Balance<T>,
         locked_until_epoch: EpochTimeLock

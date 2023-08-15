@@ -44,6 +44,8 @@ module games::drand_random_dice {
     use games::drand_lib::{derive_randomness, verify_drand_signature, safe_selection, get_lateset_round};
     use games::hongwang_coin::HONGWANG_COIN;
     use games::profits_pool::{Self, Pool};
+    use games::locked_coin::{Self, LockedCoin};
+    use std::debug;
     use std::option::{Self, Option};
     use sui::object::{Self, ID, UID};
     use sui::transfer;
@@ -52,8 +54,7 @@ module games::drand_random_dice {
     use sui::balance::{Self, Balance};
     use sui::coin::{Self, Coin};
     use sui::sui::SUI;
-
-    use std::debug;
+    use sui::table::{Self, add, contains, borrow, borrow_mut, remove, Table};
 
     /// Error codes
     const EGameNotInProgress: u64 = 0;
@@ -75,13 +76,14 @@ module games::drand_random_dice {
 
     /// Game represents a set of parameters of a single game.
     /// This game can be extended to require ticket purchase, reward winners, etc.
-    ///
     struct Game has key, store {
         id: UID,
+        addition_round: u64,
         round: u64,
         status: u8,
         participants: u64,
         winner: Option<u64>,
+        pool: Pool,
     }
 
     /// Ticket represents a participant in a single game.
@@ -89,6 +91,7 @@ module games::drand_random_dice {
     struct Ticket has key, store {
         id: UID,
         game_id: ID,
+        round: u64,
         price: u64,
         participant_index: u64,
     }
@@ -105,54 +108,67 @@ module games::drand_random_dice {
     struct GameOwnerCapability has key {
         id: UID
     }
+
+    // This Capability allows the Participant to start new round.
+    struct GameParticipantCapability has key, store {
+        id: UID,
+        token: Table<ID, LockedCoin<HONGWANG_COIN>>,
+    }
     
-    fun init(otw: DRAND_RANDOM_DICE, ctx: &mut sui::tx_context::TxContext) {
+    fun init(_otw: DRAND_RANDOM_DICE, ctx: &mut sui::tx_context::TxContext) {
         let game_owner_cap = GameOwnerCapability{
             id:object::new(ctx)
         };
+
         transfer::transfer(
             game_owner_cap,
             tx_context::sender(ctx)
         );
     }
 
-    /// Create a assign epoch shared-object Game.
-    /*
-    public entry fun create(round: u64, ctx: &mut TxContext) {
-        let game = Game {
-            id: object::new(ctx),
-            round,
-            status: IN_PROGRESS,
-            participants: 0,
-            winner: option::none(),
-            profits: balance::zero<SUI>(),
-        };
-        debug::print(&round);
-        transfer::public_share_object(game);
-    }*/
-
     /// === Owner Operation ===
-    public entry fun create_after_round(clock: &Clock, round: u64, ctx: &mut TxContext) {
+    public entry fun create_after_round(_cap: &GameOwnerCapability, pool: Pool, clock: &Clock, round: u64, ctx: &mut TxContext) {
         let clock_ms = clock::timestamp_ms(clock);
-        round = round + get_lateset_round(clock_ms);
+        let current_round = round + get_lateset_round(clock_ms);
         let game = Game {
             id: object::new(ctx),
-            round,
+            addition_round: round,
+            round: current_round,
             status: IN_PROGRESS,
             participants: 0,
             winner: option::none(),
+            pool: pool,
         };
         transfer::public_share_object(game);
     }
 
+    public entry fun set_round (_cap: &GameOwnerCapability, game:&mut Game, round:u64, ctx: &mut TxContext){
+        game.addition_round = round;
+    }
+
+    public entry fun start_game_by_owner(_cap: &GameOwnerCapability, game:&mut Game, clock: &Clock) {
+        assert!(game.status == COMPLETED, EGameNotInProgress);
+        let clock_ms = clock::timestamp_ms(clock);
+        game.round = game.addition_round + get_lateset_round(clock_ms);
+        game.status = IN_PROGRESS;
+    }
+
+    /// === Participant Operation ===
+    public entry fun start_game_by_participant(_cap: &GameParticipantCapability, game:&mut Game, clock: &Clock) {
+
+        assert!(game.status == COMPLETED, EGameNotInProgress);
+        let clock_ms = clock::timestamp_ms(clock);
+        game.round = game.addition_round + get_lateset_round(clock_ms);
+        game.status = IN_PROGRESS;
+    }
+
+    /// === General Operation ===
     /// Anyone can close the game by providing the randomness of round-2.
     public entry fun close(game: &mut Game, drand_sig: vector<u8>, drand_prev_sig: vector<u8>) {
         assert!(game.status == IN_PROGRESS, EGameNotInProgress);
         verify_drand_signature(drand_sig, drand_prev_sig, closing_round(game.round));
         game.status = CLOSED;
     }
-
-    /// === Creator/User Operation ===
 
     /// Anyone can complete the game by providing the randomness of round.
     public entry fun complete(game: &mut Game, drand_sig: vector<u8>, drand_prev_sig: vector<u8>) {
@@ -164,37 +180,40 @@ module games::drand_random_dice {
         game.winner = option::some(safe_selection(game.participants, &digest));
     }
 
-    /// Anyone can participate in the game and receive a ticket.
-    public entry fun participate(pool: &mut Pool, game: &mut Game, c: Coin<SUI>, ctx: &mut TxContext) {
+    /// Anyone can play random dice in the game and receive a ticket.
+    public entry fun play_random_dice(game: &mut Game, c: Coin<SUI>, ctx: &mut TxContext) {
         assert!(game.status == IN_PROGRESS, EGameNotInProgress);
+        assert!(coin::value(&c) >= 1, EInsufficientFunds);
         let b = coin::into_balance(c);
-        let price = balance::value(&b) * 9 / 10;
+        let price = balance::value(&b);
         let number = game.participants % 5;
         let ticket = Ticket {
             id: object::new(ctx),
             game_id: object::id(game),
+            round: game.round,
             price: price,
             participant_index: number,
         };
         game.participants = game.participants + 1;
 
         //how many coin in this tx supply.
-        balance::join(profits_pool::pool_reward(pool), b);
+        balance::join(profits_pool::pool_reward(game_pool(game)), b);
         transfer::public_transfer(ticket, tx_context::sender(ctx));
     }
 
     /// The winner can redeem its ticket.
-    public entry fun redeem(pool: &mut Pool, game: &mut Game, ticket: &Ticket, ctx: &mut TxContext) {
+    public entry fun redeem(game: &mut Game, ticket: &Ticket, ctx: &mut TxContext) {
+        assert!(game.status == COMPLETED, EGameNotInProgress);
         assert!(object::id(game) == ticket.game_id, EInvalidTicket);
         let amount = ticket.price;
-        let redeem = coin::take(profits_pool::pool_reward(pool),amount, ctx);
+        let redeem = coin::take(profits_pool::pool_reward(game_pool(game)),amount, ctx);
 
         transfer::public_transfer(redeem, tx_context::sender(ctx));
     }
 
     // Note that a ticket can be deleted before the game was completed.
     public entry fun delete_ticket(ticket: Ticket) {
-        let Ticket { id, game_id:  _, price: _, participant_index: _} = ticket;
+        let Ticket { id, game_id:  _, round: _, price: _, participant_index: _} = ticket;
         object::delete(id);
     }
 
@@ -208,6 +227,10 @@ module games::drand_random_dice {
 
     fun closing_round(round: u64): u64 {
         round - 2
+    }
+
+    public fun game_pool(game:&mut Game): &mut Pool {
+        &mut game.pool
     }
 
     #[test_only]

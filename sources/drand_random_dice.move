@@ -1,89 +1,62 @@
-// Copyright (c) Mysten Labs, Inc.
+// Copyright (coin) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 #[allow(unused_use)]
-/// A basic game that depends on randomness from drand (chained mode).
-///
-/// The main chain of drand creates random 32 bytes every 30 seconds. This randomness is verifiable in the sense
-/// that anyone can check if a given 32 bytes bytes are indeed the i-th output of drand. For more details see
-/// https://drand.love/
-///
-/// One could implement on-chain games that need unbiasable and unpredictable randomness using drand as the source of
-/// randomness. I.e., every time the game needs randomness, it receives the next 32 bytes from drand (whether as part
-/// of a transaction or by reading it from an existing object) and follows accordingly.
-/// However, this simplistic flow may be insecure in some cases because the blockchain is not aware of the latest round
-/// of drand, and thus it may depend on randomness that is already public.
-///
-/// Below we design a game that overcomes this issue as following:
-/// - The game is defined for a specific drand round N in the future, for example, the round that is expected in
-///   5 mins from now.
-///   The current round for the main chain can be retrieved (off-chain) using
-///   `curl https://drand.cloudflare.com/8990e7a9aaed2ffed73dbd7092123d6f289930540d7651336225dc172e51b2ce/public/latest',
-///   or using the following python script:
-///      import time
-///      genesis = 1595431050
-///      curr_round = (time.time() - genesis) // 30 + 1
-///   The round in 5 mins from now will be curr_round + 5*2.
-///   (genesis is the epoch of the first round as returned from
-///   curl https://drand.cloudflare.com/8990e7a9aaed2ffed73dbd7092123d6f289930540d7651336225dc172e51b2ce/info.)
-/// - Anyone can *close* the game to new participants by providing drand's randomness of round N-2 (i.e., 1 minute before
-///   round N). The randomness of round X can be retrieved using
-///  `curl https://drand.cloudflare.com/8990e7a9aaed2ffed73dbd7092123d6f289930540d7651336225dc172e51b2ce/public/X'.
-/// - Users can join the game as long as it is not closed and receive a *ticket*.
-/// - Anyone can *complete* the game by proving drand's randomness of round N, which is used to declare the winner.
-/// - The owner of the winning "ticket" can request a "winner ticket" and finish the game.
-/// As long as someone is closing the game in time (or at least before round N) we have the guarantee that the winner is
-/// selected using unpredictable and unbiasable randomness. Otherwise, someone could wait until the randomness of round N
-/// is public, see if it could win the game and if so, join the game and drive it to completion. Therefore, honest users
-/// are encourged to close the game in time.
-///
-/// All the external inputs needed for the following APIs can be retrieved from one of drand's public APIs, e.g. using
-/// the above curl commands.
-///
 module games::drand_random_dice {
-    use games::drand_lib::{derive_randomness, verify_drand_signature, safe_selection, get_lateset_round};
+
     use games::hongwang_coin::HONGWANG_COIN;
+    use games::drand_lib as dl;
     use games::profits_pool::{Self, Pool};
     use games::locked_coin::{Self, LockedCoin};
-    use std::debug;
-    use std::option::{Self, Option};
-    use sui::object::{Self, ID, UID};
+    use sui::sui::SUI;
+    use sui::object::{Self, ID, UID}; 
     use sui::transfer;
     use sui::tx_context::{Self, TxContext};
     use sui::clock::{Self, Clock};
     use sui::balance::{Self, Balance};
     use sui::coin::{Self, Coin};
-    use sui::sui::SUI;
-    use sui::table::{Self, add, contains, borrow, borrow_mut, remove, Table};
+    use sui::table::{Self, Table};
+    use sui::dynamic_object_field as dof;
+    use std::option::{Self, Option};
+    use std::debug;
 
-    /// Error codes
+    // ------------ Errors ------------
+
     const EGameNotInProgress: u64 = 0;
     const EGameAlreadyCompleted: u64 = 1;
     const EInvalidRandomness: u64 = 2;
     const EInvalidTicket: u64 = 3;
+
+    // ------------ Constants ------------
     
     /// Not enough funds to pay for the good in question
     const EInsufficientFunds: u64 = 4;
     /// Nothing to withdraw
     const ENoProfits: u64 = 5;
 
-    /// Game status
+    /// Game Status
     const IN_PROGRESS: u8 = 0;
     const CLOSED: u8 = 1;
     const COMPLETED: u8 = 2;
+    const PREPARATION: u8 = 3;
 
-    struct DRAND_RANDOM_DICE has drop {}
+    /// Game Participant Capability Type
+    const Gold:   u8 = 0;
+    const Silver: u8 = 1;
+    const Copper: u8 = 2;
+
+    // ------------ Objects ------------
 
     /// Game represents a set of parameters of a single game.
     /// This game can be extended to require ticket purchase, reward winners, etc.
-    struct Game has key, store {
+    struct Game<phantom T> has key, store {
         id: UID,
         addition_round: u64,
         round: u64,
         status: u8,
         participants: u64,
         winner: Option<u64>,
-        pool: Pool,
+        pool: Pool<T>,
     }
 
     /// Ticket represents a participant in a single game.
@@ -96,26 +69,36 @@ module games::drand_random_dice {
         participant_index: u64,
     }
 
-    /// GameWinner represents a participant that won in a specific game.
-    /// Can be deconstructed only by the owner.
-    struct GameWinner has key, store {
-        id: UID,
-        game_id: ID,
-        redeem: u64,
-    }
-
     // This Capability allows the owner to withdraw profits
     struct GameOwnerCapability has key {
         id: UID
     }
 
+    struct OneTimeTicket has key, store {
+        id: UID,
+        ticket: Cap_Ticket,
+    }
+
+    struct Cap_Ticket has store, drop {
+        game_id: ID,
+        at_least_token: u64,
+    }
+
     // This Capability allows the Participant to start new round.
     struct GameParticipantCapability has key, store {
         id: UID,
+        game_id: ID,
         token: Table<ID, LockedCoin<HONGWANG_COIN>>,
     }
+
+    // ------------ Witness ------------
+    
+    struct DRAND_RANDOM_DICE has drop {}
+
+    // ------------ Constructor ------------
     
     fun init(_otw: DRAND_RANDOM_DICE, ctx: &mut sui::tx_context::TxContext) {
+        std::debug::print(&std::string::utf8(b"init"));
         let game_owner_cap = GameOwnerCapability{
             id:object::new(ctx)
         };
@@ -126,10 +109,72 @@ module games::drand_random_dice {
         );
     }
 
-    /// === Owner Operation ===
-    public entry fun create_after_round(_cap: &GameOwnerCapability, pool: Pool, clock: &Clock, round: u64, ctx: &mut TxContext) {
-        let clock_ms = clock::timestamp_ms(clock);
-        let current_round = round + get_lateset_round(clock_ms);
+    // ------------ Owner Capability Operation ------------
+    
+    public entry fun create_game_ott_capability<T> (_cap: &GameOwnerCapability, game: &mut Game<T>, invite_level: u8, ctx: &mut TxContext) {
+        let amount = 100;
+        if ( invite_level == Gold ) { amount = 0 }
+        else if ( invite_level == Silver ) { amount = 10 }
+        else if ( invite_level == Copper ) { amount = 40 };
+
+        let id = *object::uid_as_inner(&game.id);
+
+        let cap_ticket = Cap_Ticket {
+            game_id: id,
+            at_least_token: amount,
+        };
+
+        transfer::transfer(
+            OneTimeTicket {
+                id: object::new(ctx),
+                ticket: cap_ticket,
+            },
+        tx_context::sender(ctx)
+        );
+    }
+
+    // ------------ Participant Capability Operation ------------
+    
+    public entry fun create_game_articipant_capability<T> (
+        cap: OneTimeTicket, game: &mut Game<T>, hw_coin: Coin<HONGWANG_COIN>, ctx: &mut TxContext
+    ){
+        let (game_id, amount) = unpack_one_time_ticket(cap);    
+        assert!(game_id == object::uid_to_inner(&game.id),ENoProfits);
+        assert!(coin::value(&hw_coin) >= amount, EGameNotInProgress);
+        let lock_epoch = tx_context::epoch(ctx);
+        let lockcoin = locked_coin::lock_coin_for_cap(hw_coin, lock_epoch, ctx);
+        let hw_coin_table = table::new(ctx);
+        table::add<ID, LockedCoin<HONGWANG_COIN>>(&mut hw_coin_table, object::id(&lockcoin), lockcoin);
+        
+        transfer::transfer(
+            GameParticipantCapability {
+                id: object::new(ctx),
+                game_id: object::uid_to_inner(&game.id),
+                token: hw_coin_table,
+            }, 
+        tx_context::sender(ctx)
+        );
+    }
+
+    public fun unpack_one_time_ticket (
+        ott: OneTimeTicket
+    ): (ID, u64){
+        let OneTimeTicket {
+            id,
+            ticket,
+        } = ott;
+        object::delete(id);
+        (ticket.game_id, ticket.at_least_token)
+    }
+
+    // ------------ Owner Operation ------------
+
+    public entry fun create_after_round<T> (_cap: &GameOwnerCapability, pool: Pool<T>, clock: &Clock, round: u64, ctx: &mut TxContext) {
+        debug::print(ctx);
+        debug::print(&tx_context::epoch_timestamp_ms(ctx));
+        let current_round = round + dl::get_lateset_round(ctx);
+        debug::print(&dl::get_lateset_round(ctx));
+        debug::print(&current_round);
         let game = Game {
             id: object::new(ctx),
             addition_round: round,
@@ -142,49 +187,49 @@ module games::drand_random_dice {
         transfer::public_share_object(game);
     }
 
-    public entry fun set_round (_cap: &GameOwnerCapability, game:&mut Game, round:u64, ctx: &mut TxContext){
+    public entry fun set_round<T> (_cap: &GameOwnerCapability, game: &mut Game<T>, round: u64){
         game.addition_round = round;
     }
 
-    public entry fun start_game_by_owner(_cap: &GameOwnerCapability, game:&mut Game, clock: &Clock) {
+    public entry fun start_game_by_owner<T> (_cap: &GameOwnerCapability, game:&mut Game<T>, ctx: &mut TxContext) {
         assert!(game.status == COMPLETED, EGameNotInProgress);
-        let clock_ms = clock::timestamp_ms(clock);
-        game.round = game.addition_round + get_lateset_round(clock_ms);
+        game.round = game.addition_round + dl::get_lateset_round(ctx);
         game.status = IN_PROGRESS;
     }
 
-    /// === Participant Operation ===
-    public entry fun start_game_by_participant(_cap: &GameParticipantCapability, game:&mut Game, clock: &Clock) {
-
-        assert!(game.status == COMPLETED, EGameNotInProgress);
-        let clock_ms = clock::timestamp_ms(clock);
-        game.round = game.addition_round + get_lateset_round(clock_ms);
+    // ------------ Participant Operation ------------
+    
+    public entry fun start_game_by_participant<T> (_cap: &GameParticipantCapability, game:&mut Game<T>, ctx: &mut TxContext) {
+        assert!(game.status == PREPARATION, EGameNotInProgress);
+        game.round = game.addition_round + dl::get_lateset_round(ctx);
         game.status = IN_PROGRESS;
     }
 
-    /// === General Operation ===
+    // ------------ Game Cycle Operation ------------
+    
     /// Anyone can close the game by providing the randomness of round-2.
-    public entry fun close(game: &mut Game, drand_sig: vector<u8>, drand_prev_sig: vector<u8>) {
+    public entry fun close<T> (game: &mut Game<T>, drand_sig: vector<u8>, drand_prev_sig: vector<u8>) {
         assert!(game.status == IN_PROGRESS, EGameNotInProgress);
-        verify_drand_signature(drand_sig, drand_prev_sig, closing_round(game.round));
+        dl::verify_drand_signature(drand_sig, drand_prev_sig, closing_round(game.round));
         game.status = CLOSED;
-    }
+    } 
 
     /// Anyone can complete the game by providing the randomness of round.
-    public entry fun complete(game: &mut Game, drand_sig: vector<u8>, drand_prev_sig: vector<u8>) {
+    public entry fun complete<T> (game: &mut Game<T>, drand_sig: vector<u8>, drand_prev_sig: vector<u8>) {
         assert!(game.status != COMPLETED, EGameAlreadyCompleted);
-        verify_drand_signature(drand_sig, drand_prev_sig, game.round);
+        dl::verify_drand_signature(drand_sig, drand_prev_sig, game.round);
         game.status = COMPLETED;
         // The randomness is derived from drand_sig by passing it through sha2_256 to make it uniform.
-        let digest = derive_randomness(drand_sig);
-        game.winner = option::some(safe_selection(game.participants, &digest));
+        let digest = dl::derive_randomness(drand_sig);
+        game.winner = option::some(dl::safe_selection(game.participants, &digest));
     }
 
     /// Anyone can play random dice in the game and receive a ticket.
-    public entry fun play_random_dice(game: &mut Game, c: Coin<SUI>, ctx: &mut TxContext) {
+    public entry fun play_random_dice<T> (game: &mut Game<T>, coin: Coin<T>, ctx: &mut TxContext) {
         assert!(game.status == IN_PROGRESS, EGameNotInProgress);
-        assert!(coin::value(&c) >= 1, EInsufficientFunds);
-        let b = coin::into_balance(c);
+        assert!(coin::value(&coin) >= 1, EInsufficientFunds);
+
+        let b = coin::into_balance(coin);
         let price = balance::value(&b);
         let number = game.participants % 5;
         let ticket = Ticket {
@@ -196,16 +241,14 @@ module games::drand_random_dice {
         };
         game.participants = game.participants + 1;
 
-        //how many coin in this tx supply.
         balance::join(profits_pool::pool_reward(game_pool(game)), b);
         transfer::public_transfer(ticket, tx_context::sender(ctx));
     }
 
-    /// The winner can redeem its ticket.
-    public entry fun redeem(game: &mut Game, ticket: &Ticket, ctx: &mut TxContext) {
+    public entry fun redeem<T> (game: &mut Game<T>, ticket: &Ticket, ctx: &mut TxContext) {
         assert!(game.status == COMPLETED, EGameNotInProgress);
         assert!(object::id(game) == ticket.game_id, EInvalidTicket);
-        let amount = ticket.price;
+        let amount = ticket.price * 6;
         let redeem = coin::take(profits_pool::pool_reward(game_pool(game)),amount, ctx);
 
         transfer::public_transfer(redeem, tx_context::sender(ctx));
@@ -217,19 +260,17 @@ module games::drand_random_dice {
         object::delete(id);
     }
 
-    public fun get_ticket_game_id(ticket: &Ticket): &ID {
-        &ticket.game_id
-    }
+    // ------------ General Operation ------------
 
-    public fun get_game_winner_game_id(ticket: &GameWinner): &ID {
-        &ticket.game_id
+    public fun get_ticket_game_id(ticket: &Ticket): ID {
+        ticket.game_id
     }
 
     fun closing_round(round: u64): u64 {
         round - 2
     }
 
-    public fun game_pool(game:&mut Game): &mut Pool {
+    public fun game_pool<T> (game:&mut Game<T>): &mut Pool<T> {
         &mut game.pool
     }
 
@@ -237,4 +278,5 @@ module games::drand_random_dice {
     public fun init_for_testing(ctx: &mut TxContext) {
         init(DRAND_RANDOM_DICE{}, ctx);
     }
+
 }

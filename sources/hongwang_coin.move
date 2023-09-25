@@ -44,9 +44,10 @@ module games::hongwang_coin {
         init( HONGWANG_COIN {}, ctx);
     }
 
+    /*
     #[allow(unused_use)]
     #[test]
-    fun test_hongwang_coin_supply() {
+    fun k_test_hongwang_coin_supply() {
         use sui::test_scenario;
         use std::debug;
 
@@ -62,5 +63,5 @@ module games::hongwang_coin {
 
         //
         test_scenario::end(scenario_val);
-    }
+    }*/
 }

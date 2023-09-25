@@ -12,6 +12,7 @@ module games::locked_coin {
     use std::debug;
 
     friend games::profits_pool;
+    friend games::drand_random_dice;
 
     /// A coin of type `T` locked until `locked_until_epoch`.
     struct LockedCoin<phantom T> has key, store {
@@ -59,6 +60,45 @@ module games::locked_coin {
     /// of the coin. If the check is successful, the locked coin is deleted and a Coin<T> is transferred back
     /// to the sender.
     public entry fun unlock_coin<T>(
+        locked_coin: LockedCoin<T>, 
+        ctx: &mut TxContext
+    ) {
+        let LockedCoin { id, balance, locked_until_epoch } = locked_coin;
+        object::delete(id);
+        epoch_time_lock::destroy(locked_until_epoch, ctx);
+        let coin = coin::from_balance(balance, ctx);
+        transfer::public_transfer(coin, tx_context::sender(ctx));
+    }
+
+    /// Create a LockedCoin from `balance` and transfer it to `owner`.
+    public(friend) fun new_from_balance_for_cap<T>(
+        balance: Balance<T>, 
+        locked_until_epoch: EpochTimeLock,
+        ctx: &mut TxContext
+    ): LockedCoin<T> {
+        LockedCoin {
+            id: object::new(ctx),
+            balance,
+            locked_until_epoch
+        }
+    }
+
+    /// Lock a coin up until `locked_until_epoch`. The input Coin<T> is deleted and a LockedCoin<T>
+    /// is transferred to the `recipient`. This function aborts if the `locked_until_epoch` is less than
+    /// or equal to the current epoch.
+    public(friend) fun lock_coin_for_cap<T>(
+        coin: Coin<T>, 
+        locked_until_epoch: u64, 
+        ctx: &mut TxContext
+    ): LockedCoin<T> {
+        let balance = coin::into_balance(coin);
+        new_from_balance_for_cap(balance, epoch_time_lock::new(locked_until_epoch, ctx), ctx)
+    }
+
+    /// Unlock a locked coin. The function aborts if the current epoch is less than the `locked_until_epoch`
+    /// of the coin. If the check is successful, the locked coin is deleted and a Coin<T> is transferred back
+    /// to the sender.
+    public entry fun unlock_coin_for_cap<T>(
         locked_coin: LockedCoin<T>, 
         ctx: &mut TxContext
     ) {

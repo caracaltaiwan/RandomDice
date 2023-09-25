@@ -11,14 +11,15 @@ module games::drand_lib {
     use std::vector;
 
     use sui::bls12381;
-    use sui::clock;
+    use sui::tx_context::{Self, TxContext};
+    
 
     /// Error codes
     const EInvalidRndLength: u64 = 0;
     const EInvalidProof: u64 = 1;
 
     /// The genesis time of chain 8990e7a9aaed2ffed73dbd7092123d6f289930540d7651336225dc172e51b2ce.
-    const GENESIS: u64 = 1595431050;
+    const GENESIS: u64 = 1595431050000;
     /// The public key of chain 8990e7a9aaed2ffed73dbd7092123d6f289930540d7651336225dc172e51b2ce.
     const DRAND_PK: vector<u8> =
         x"868f005eb8e6e4ca0a47c8a77ceaa5309a47978a7c71bc5cce96366b5d7a569937c529eeda66c7293784a9402801af31";
@@ -74,9 +75,10 @@ module games::drand_lib {
     }
 
     /// Automatically fetching the latest round.
-    public entry fun get_lateset_round(timestamp_ms: u64): u64{
-        let clock = timestamp_ms;
-        let round = (clock - GENESIS)  / 30 + 1;
+    public entry fun  get_lateset_round(ctx: &mut TxContext): u64{
+        let timestamp_ms = tx_context::epoch_timestamp_ms(ctx);
+        assert!(timestamp_ms >= GENESIS, EInvalidRndLength);
+        let round = (timestamp_ms - GENESIS)  / 30_000 + 1;
         round
     }
 
@@ -92,13 +94,10 @@ module games::drand_lib {
 
         //Create and initial clock object
         let ctx = tx_context::dummy();
-        let clock = clock::create_for_testing(&mut ctx);
 
-        clock::increment_for_testing( &mut clock, GENESIS + 42 +60);
+        tx_context::increment_epoch_timestamp( &mut ctx, GENESIS + 42 +60);
         
         // Get time from 
-        let time = sui::clock::timestamp_ms(&clock);
-        debug::print(&get_lateset_round(time));
-        clock::destroy_for_testing(clock);
+        debug::print(&get_lateset_round(&mut ctx));
     }
 }
